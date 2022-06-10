@@ -1,2 +1,5 @@
 .venv
 .env
+xls/*
+*.xlsx
+*.xls

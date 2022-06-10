@@ -8,10 +8,11 @@ from attrs_strict import type_validator
 import os
 import datetime
 import numpy as np
+import argparse
 
 load_dotenv()
 
-MYSQL_DB = os.getenv("MYSQL_DB", "printer_counter")
+MYSQL_DB = os.getenv("MYSQL_DB", "anthology")
 MYSQL_HOST = os.getenv("MYSQL_HOST", "localhost")
 MYSQL_USER = os.getenv("MYSQL_USER", "")
 MYSQL_PASSWORD = os.getenv("MYSQL_PASSWORD", "")
@@ -53,26 +54,63 @@ class PersonAcceptance(object):
             from_date = row['ingresso']
         )
         
-def main():
+def main(input, output):
     persons = []
-    df = pd.read_excel(
-        './xls/sanbenedetto_SAI.xlsx',
-    )
+    df = pd.read_excel(input)
     df = df.replace([np.nan], [None])
     as_dict = df.to_dict('records')
 
     for row in as_dict:
         persons.append(PersonAcceptance.import_row(row))
 
-    writer = pd.ExcelWriter('./xls/out.xlsx', engine='xlsxwriter')
+    writer = pd.ExcelWriter(output, engine='xlsxwriter')
 
     cursor = db.cursor()
 
     write_header = True
 
+    dataframe = {
+        "id": [],
+        "ant_uuid": [],
+        "nome": [],
+        "cognome": [],
+        "nazione": [],
+        "data_nascita": [],
+        "genere": [],
+        "centro_1": [],
+        "ingresso_1": [],
+        "uscita_1": [],
+        "motivazione_1": [],
+        "centro_2": [],
+        "ingresso_2": [],
+        "uscita_2": [],
+        "motivazione_2": [],
+        "centro_3": [],
+        "ingresso_3": [],
+        "uscita_3": [],
+        "motivazione_3": [],
+        "centro_4": [],
+        "ingresso_4": [],
+        "uscita_4": [],
+        "motivazione_4": [],
+        "centro_5": [],
+        "ingresso_5": [],
+        "uscita_5": [],
+        "motivazione_5": [],
+    }
+
     for p in persons:
+
+        dataframe['id'].append(p.id)
+        dataframe['nome'].append(p.name)
+        dataframe['cognome'].append(p.surname)
+        dataframe['nazione'].append(p.birth_nation)
+        dataframe['data_nascita'].append(p.birth_date)
+        dataframe['genere'].append(p.gender)
+
         sql = """
             SELECT
+                HEX(P.uuid) AS ant_uuid,
                 %s AS id_sprar,
                 P.name AS nome,
                 P.surname AS cognome,
@@ -95,8 +133,9 @@ def main():
                 AND N.name = %s
                 AND P.birth_date = %s
                 AND P.gender = %s
-                
+                AND AP.from_date >= DATE_SUB(%s, INTERVAL 5 DAY)
             )
+            LIMIT 0, 5
         """
 
         cursor.execute(sql,
@@ -109,20 +148,50 @@ def main():
                 p.birth_nation,
                 p.birth_date,
                 p.gender,
+                p.from_date,
             )
         )
 
         result = cursor.fetchall()
-        df_out = pd.DataFrame(result)
 
-        if not write_header:
-            reader = pd.read_excel(r'./xls/out.xlsx')
-            df_out.to_excel(writer, index=False, header=False, startrow=len(reader)+1)
+        if result:
+            dataframe["ant_uuid"].append(result[0]['ant_uuid'])
         else:
-            df_out.to_excel(writer, index=True, header=True)
-            write_header = False
+            dataframe["ant_uuid"].append(None)
 
-        writer.save()
+        index = 1
+        for r in result:
+            dataframe[f"centro_{index}"].append(r['centro'])
+            dataframe[f"ingresso_{index}"].append(r['inizio_accoglienza'])
+            dataframe[f"uscita_{index}"].append(r['fine_accoglienza'])
+            dataframe[f"motivazione_{index}"].append(r['motivo_uscita'])
+
+            index += 1
+
+        if index < 6:
+            for n in range(index, 6):
+                dataframe[f"centro_{n}"].append(None)
+                dataframe[f"ingresso_{n}"].append(None)
+                dataframe[f"uscita_{n}"].append(None)
+                dataframe[f"motivazione_{n}"].append(None)
+    
+   
+    print(dataframe)
+
+    df_out = pd.DataFrame(dataframe)
+    df_out.to_excel(writer, index=True, header=True)
+
+    writer.save()
 
 if __name__ == '__main__':
-    main()
+    parser = argparse.ArgumentParser(description='Processa gli xlsx della Banca Dati Centrale e produce un xlsx con i dettagli delle accoglienze.')
+    parser.add_argument('-i', '--input_file', metavar='N', type=str,
+                    help='File xlsx in ingresso', required=True)
+    parser.add_argument('-o', '--output_file', metavar='N', type=str,
+                    help='File xlsx in otput')
+
+    args = parser.parse_args()
+    input = args.input_file
+    output = args.output_file if args.output_file else './xls/out.xlsx'
+    
+    main(input, output)
